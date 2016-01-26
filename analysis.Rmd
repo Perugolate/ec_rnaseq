@@ -1,0 +1,297 @@
+---
+header-includes: \usepackage{graphicx}
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 3
+  html_document:
+    toc: yes
+    toc_depth: 3
+---
+
+# *E. coli* mRNA/sRNA RNAseq
+
+## Data retrieval, QC, alignment, and counting
+
+The .fastq files are stored in illumina's basespace cloud and are accessible via `basemount`. They are also now backed up on the group storage `MITARBEITER/paul_johnston/ecoli_rnaseq` together with the `fastqc` quality control reports.
+```{sh, eval=FALSE}
+# mount illumina basespace
+basemount /mnt/basespace
+# get fastq
+cp /mnt/basespace/Projects/2014_25_JR_EcoliRNA/Samples/*/Files/Data/Intensities/\
+BaseCalls/*fastq.gz .
+# quality control
+fastqc *fastq.gz
+mkdir qc && mv *zip qc/ && mv *html qc/
+```
+
+### Prep reference genome
+
+We're using the MG1655 .gtf from ensembl genomes.
+```{sh, eval=FALSE}
+mkdir ensembl && cd ensembl
+# get assembly
+wget ftp://ftp.ensemblgenomes.org/pub/bacteria/release-28/fasta/bacteria_0_collection/\
+escherichia_coli_str_k_12_substr_mg1655/dna/\*
+mv README READMEg
+# get gtf annotation 
+wget ftp://ftp.ensemblgenomes.org/pub/bacteria/release-28/gtf/bacteria_0_collection/\
+escherichia_coli_str_k_12_substr_mg1655/\*
+mv README READMEa
+# get GO annotation
+wget ftp://ftp.ebi.ac.uk/pub/databases/GO/goa/proteomes/18.E_coli_MG1655.goa
+wget ftp://ftp.ebi.ac.uk/pub/databases/GO/goa/proteomes/README
+mv README READMEgo
+gunzip -c Escherichia_coli_str_k_12_substr_mg1655.GCA_000005845.2.28.dna.genome.fa.gz >
+ref.fa
+gunzip -c Escherichia_coli_str_k_12_substr_mg1655.GCA_000005845.2.28.gtf.gz > ref.gtf
+bwa index ref.fa && cd ..
+```
+
+### Align reads to reference
+
+```{sh, eval=FALSE}
+# get sample prefixes
+for i in *RNA*gz; do
+    echo $i
+done | cut -f 1-2 -d "_" | sort -u > samples
+mkdir output02
+# align reads
+for i in `cat samples`; do
+    bwa mem -t 12 ensembl/ref.fa ${i}_L001_R1_001.fastq.gz ${i}_L001_R2_001.fastq.gz >
+    output02/$i.sam
+done
+# sort sam and produce bam
+for i in `cat samples`; do
+    picard-tools SortSam I=output02/$i.sam O=output02/$i.bam SO=coordinate &&
+    picard-tools BuildBamIndex INPUT=output02/$i.bam
+done
+```
+
+By the look of the `bwa` output the strand orientation is FR (other orientations contain no alignments).
+
+### Counts reads in features with `htseq-count`
+
+`htseq-count` uses the gtf annotation to identify reads from the alignment file (the bam files) that overlap genes and summarizes them as counts. This takes a few minutes per sample. Note the reads are `htseq-count` reverse orientation (`-s reverse`).
+```{sh, eval=FALSE}
+cd output02/
+for i in *bam; do
+    htseq-count -a 0 -f bam -r pos -s reverse -t exon -i gene_name $i ../ensembl/ref.gtf >
+    $i.counts7
+done
+```
+
+## Differential gene expression
+
+The `htseq-count` is also backed up under `MITARBEITER/paul_johnston/ecoli_rnaseq/counts/`.
+```{r, message=FALSE, warning=FALSE}
+library(BiocParallel) # to parallelize DESeq2
+library(DESeq2)
+library(cowplot)
+library(magrittr)
+library(GSEABase)
+library(GOstats)
+library(dplyr)
+register(MulticoreParam(12))
+```
+
+## mRNA
+
+```{r, message=FALSE, cache=FALSE, fig.height=4.5, fig.width=4.5, fig.align='center'}
+directory <- "/mnt/windows_share/MITARBEITER/paul_johnston/ecoli_rnaseq/counts/"
+sampleFiles <- grep("mRNA", grep("counts7",list.files(directory),value=TRUE), 
+                    value=TRUE)
+treatment <- c(rep('control',3),rep('treated',3))
+sampleTable <- data.frame(sampleName = sampleFiles, fileName = sampleFiles, treatment)
+ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable, directory = directory, 
+                                       design= ~ treatment)
+dds <- DESeq(ddsHTSeq, parallel=TRUE, fitType="local")
+plotDispEsts(dds)
+```
+
+![](plots/dds_disp.svg)
+
+```{r, cache=FALSE, fig.align='center'}
+rld <- rlog(dds, fitType="local")
+plotPCA(rld, intgroup=c("treatment"), ntop=4451)
+results(dds, alpha=0.05, addMLE=TRUE) %>% subset(padj < 0.05 & abs(log2FoldChange) > 1)
+```
+
+![](plots/dds_pca.svg)
+
+```{r, cache=FALSE, eval=TRUE, fig.height=4.5, fig.width=4.5, fig.align='center'}
+plotMA(dds, alpha=0.05, ylim=c(-7, 7))
+```
+
+![](plots/dds_ma.svg)
+
+## sRNA
+
+```{r, message=FALSE, cache=FALSE, fig.height=4.5, fig.width=4.5, fig.align='center'}
+directory <- "/mnt/windows_share/MITARBEITER/paul_johnston/ecoli_rnaseq/counts/"
+sampleFilesS <- grep("sRNA", grep("*counts7",list.files(directory),value=TRUE), 
+                     value=TRUE)
+treatmentS <- c(rep('control',3),rep('treated',3))
+sampleTableS <- data.frame(sampleName = sampleFilesS, fileName = sampleFilesS, treatmentS)
+ddsHTSeqS <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTableS, directory = directory, 
+                                       design= ~ treatmentS)
+ddsS <- DESeq(ddsHTSeqS, parallel=TRUE, fitType="local")
+plotDispEsts(ddsS)
+```
+
+![](plots/ddss_disp.svg)
+
+```{r, cache=FALSE, eval=TRUE, fig.align='center'}
+rldS <- rlog(ddsS, fitType="local")
+plotPCA(rldS, intgroup=c("treatmentS"), ntop=4497)
+results(ddsS, alpha=0.05, addMLE=TRUE) %>% subset(padj < 0.05 & abs(log2FoldChange) > 1)
+```
+
+![](plots/ddss_pca.svg)
+
+```{r, cache=FALSE, eval=TRUE, fig.height=4.5, fig.width=4.5, fig.align='center'}
+plotMA(ddsS, alpha=0.05, ylim=c(-5, 5))
+```
+
+![](plots/ddss_ma.svg)
+
+## PCA of all data
+
+Read all counts and plot PCA.
+```{r, message=FALSE, cache=FALSE, fig.align='center'}
+directory <- "/mnt/windows_share/MITARBEITER/paul_johnston/ecoli_rnaseq/counts/"
+sampleFilesAll <- grep("counts7",list.files(directory),value=TRUE)
+treatmentAll <- rep(c(rep('control',3),rep('treated',3)),2)
+rnaTypeAll <- c(rep("mRNA",6),rep("sRNA",6))
+sampleTableAll <- data.frame(sampleName = sampleFilesAll, fileName = sampleFilesAll,
+                             treatmentAll, rnaTypeAll)
+ddsHTSeqAll <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTableAll, 
+                                          directory = directory, 
+                                          design= ~ treatmentAll + rnaTypeAll)
+ddsAll <- DESeq(ddsHTSeqAll, parallel=TRUE, fitType="local")
+sizeFactors(ddsAll)
+rldAll <- rlog(ddsAll, fitType="local")
+plotPCA(rldAll, intgroup=c("treatmentAll", "rnaTypeAll"), ntop=4451)
+```
+
+![](plots/ddsall_pca.svg)
+
+## Annotate results
+
+Combine the results with some annotation information from the goa file.
+```{r, cache=FALSE}
+## create GO table for GOstats
+# read in GO annotations
+goa <- read.table(pipe("grep -e '!' -v ../ensembl/18.E_coli_MG1655.goa | cut -f 3,5,7,10")
+                  , sep="\t")
+toGoFrame <- data.frame(goa$V2, goa$V3, goa$V1)
+colnames(toGoFrame) <- c("frame.go_id","frame.EVIDENCE","frame.gene_id")
+## create annotated results
+# munge GO table for annotated results
+resFrame <- read.table(
+  pipe("grep -e '!' -v ../ensembl/18.E_coli_MG1655.goa | cut -f 3,10 | uniq"),
+  sep="\t", quote = "")
+colnames(resFrame) <- c("gene", "annotation")
+# create mRNA results data frame
+res <- results(dds, alpha=0.05, addMLE=TRUE) %>% subset(padj < 0.05 & abs(log2FoldChange)
+                                                         > 1) %>% as.data.frame
+res <- data.frame(rownames(res), res)
+colnames(res)[1] <- "gene"
+resAnno <- merge(x=res, y=resFrame, by="gene", all.x=TRUE)
+# Do the same for the sRNA
+# create results data frame
+resS <- results(ddsS, alpha=0.05, addMLE=TRUE) %>% 
+  subset(padj < 0.05 & abs(log2FoldChange) > 1) %>% as.data.frame
+resS <- data.frame(rownames(resS), resS)
+colnames(resS)[1] <- "gene"
+# combine by ID then gene
+#resAnnoS <- merge(x=resS, y=gtfS, by="gene", all.x=TRUE)
+resAnnoS <- merge(x=resS, y=resFrame, by="gene", all.x=TRUE)
+```
+
+### GO enrichment with `GOstats`
+
+This may not be very informative (or may be very redundant since it's *E. coli*). Also it is only biological process (BP, other options would be molecular function [MF] and cellular compartment [CC]).
+```{r, message=FALSE, cache=FALSE, warning=FALSE}
+goFrame <- GOFrame(toGoFrame)
+goAllFrame <- GOAllFrame(goFrame)
+gsc <- GeneSetCollection(goAllFrame, setType = GOCollection())
+# all the GO terms from the annotation
+universe <- as.character(toGoFrame$frame.gene_id) %>% unique
+# all the genes with increased expression after treatment
+treatedUp <- subset(resAnno, log2FoldChange > 0, select=gene)[,1] %>% as.character
+# decreased expression
+treatedDown <- subset(resAnno, log2FoldChange < 0, select=gene)[,1] %>% as.character
+## treatedUp
+paramsTreatedUp <- GSEAGOHyperGParams(name="custom", geneSetCollection=gsc, 
+                                      geneIds = treatedUp, universeGeneIds = universe,
+                                      ontology = "BP", pvalueCutoff = 0.05,
+                                      conditional = TRUE, testDirection = "over")
+## treatedDown
+paramsTreatedDown <- GSEAGOHyperGParams(name="custom", geneSetCollection=gsc, 
+                                        geneIds = treatedDown, universeGeneIds = universe,
+                                        ontology = "BP", pvalueCutoff = 0.05, 
+                                        conditional = TRUE, testDirection = "over")
+# all the genes with increased expression after treatment
+treatedUpS <- subset(resAnnoS, log2FoldChange > 0, select=gene)[,1] %>% as.character
+# decreased expression
+treatedDownS <- subset(resAnnoS, log2FoldChange < 0, select=gene)[,1] %>% as.character
+## treatedUp
+paramsTreatedUpS <- GSEAGOHyperGParams(name="custom", geneSetCollection=gsc, 
+                                      geneIds = treatedUpS, universeGeneIds = universe,
+                                      ontology = "BP", pvalueCutoff = 0.05,
+                                      conditional = TRUE, testDirection = "over")
+## treatedDown
+paramsTreatedDownS <- GSEAGOHyperGParams(name="custom", geneSetCollection=gsc, 
+                                        geneIds= treatedDownS, universeGeneIds = universe,
+                                        ontology = "BP", pvalueCutoff = 0.05, 
+                                        conditional = TRUE, testDirection = "over")
+```
+
+## Full results
+
+All of the output here is on the group server:
+
+`MITARBEITER/paul_johnston/ecoli_rnaseq/output`
+
+### mRNA differentially-expressed genes
+
+```{r, eval=FALSE}
+write.table(arrange(resAnno, desc(abs(log2FoldChange))), file="resAnno_mRNA.tsv", 
+            sep="\t", quote=FALSE, row.names=FALSE)
+knitr::kable(resAnno)
+```
+
+### mRNA, over-repesented GOs from upregulated genes
+
+```{r, eval=FALSE}
+knitr::kable(summary(hyperGTest(paramsTreatedUp)))
+htmlReport(hyperGTest(paramsTreatedUp), file="BP_treatedUp_mRNA.html")
+```
+
+### mRNA, over-repesented GOs from downregulated genes
+
+```{r, eval=FALSE}
+knitr::kable(summary(hyperGTest(paramsTreatedDown)))
+htmlReport(hyperGTest(paramsTreatedDown), file="BP_treatedDown_mRNA.html")
+```
+
+### sRNA differentially-expressed genes
+
+```{r, eval=FALSE}
+write.table(arrange(resAnnoS, desc(abs(log2FoldChange))), file="resAnno_sRNA.tsv", 
+            sep="\t", quote=FALSE, row.names=FALSE)
+knitr::kable(resAnnoS)
+```
+
+### sRNA, over-repesented GOs from upregulated genes
+
+```{r, eval=FALSE}
+htmlReport(hyperGTest(paramsTreatedUpS), file="BP_treatedUp_sRNA.html")
+```
+
+### sRNA, over-repesented GOs from downregulated genes
+
+```{r, eval=FALSE}
+htmlReport(hyperGTest(paramsTreatedDownS), file="BP_treatedDown_sRNA.html")
+```

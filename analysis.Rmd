@@ -109,7 +109,7 @@ dds <- DESeq(ddsHTSeq, parallel=TRUE, fitType="local")
 plotDispEsts(dds)
 ```
 
-![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/dds_disp.svg)
+![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/dds_disp.png)
 
 ```{r, cache=FALSE, fig.align='center'}
 rld <- rlog(dds, fitType="local")
@@ -117,13 +117,13 @@ plotPCA(rld, intgroup=c("treatment"), ntop=4451)
 results(dds, alpha=0.05, addMLE=TRUE) %>% subset(padj < 0.05 & abs(log2FoldChange) > 1)
 ```
 
-![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/dds_pca.svg)
+![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/dds_pca.png)
 
 ```{r, cache=FALSE, eval=TRUE, fig.height=4.5, fig.width=4.5, fig.align='center'}
 plotMA(dds, alpha=0.05, ylim=c(-7, 7))
 ```
 
-![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/dds_ma.svg)
+![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/dds_ma.png)
 
 ## sRNA
 
@@ -139,7 +139,7 @@ ddsS <- DESeq(ddsHTSeqS, parallel=TRUE, fitType="local")
 plotDispEsts(ddsS)
 ```
 
-![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/ddss_disp.svg)
+![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/ddss_disp.png)
 
 ```{r, cache=FALSE, eval=TRUE, fig.align='center'}
 rldS <- rlog(ddsS, fitType="local")
@@ -147,13 +147,13 @@ plotPCA(rldS, intgroup=c("treatmentS"), ntop=4497)
 results(ddsS, alpha=0.05, addMLE=TRUE) %>% subset(padj < 0.05 & abs(log2FoldChange) > 1)
 ```
 
-![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/ddss_pca.svg)
+![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/ddss_pca.png)
 
 ```{r, cache=FALSE, eval=TRUE, fig.height=4.5, fig.width=4.5, fig.align='center'}
 plotMA(ddsS, alpha=0.05, ylim=c(-5, 5))
 ```
 
-![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/ddss_ma.svg)
+![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/ddss_ma.png)
 
 ## PCA of all data
 
@@ -174,7 +174,7 @@ rldAll <- rlog(ddsAll, fitType="local")
 plotPCA(rldAll, intgroup=c("treatmentAll", "rnaTypeAll"), ntop=4451)
 ```
 
-![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/ddsall_pca.svg)
+![](https://github.com/Perugolate/ec_rnaseq/blob/master/plots/ddsall_pca.png)
 
 ## Annotate results
 
